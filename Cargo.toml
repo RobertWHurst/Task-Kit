@@ -1,0 +1,9 @@
+[package]
+name = "task"
+version = "0.1.0"
+authors = ["Robert Hurst <rhurst@e-xact.com>"]
+
+[dependencies]
+num_cpus = "1.0"
+rand = "0.3"
+crossbeam = "0.3"
