@@ -1,7 +1,9 @@
 [package]
-name = "task"
+name = "task_kit"
+description = "Task Kit is a Rust crate that makes it easy to build asynchronous and concurrent systems."
 version = "0.1.0"
-authors = ["Robert Hurst <rhurst@e-xact.com>"]
+authors = ["Robert Hurst <robertwhurst@gmail.com>"]
+license = "MIT"
 
 [dependencies]
 num_cpus = "1.0"
