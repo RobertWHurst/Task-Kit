@@ -2,7 +2,7 @@ use std::fmt::{self, Debug};
 use std::mem;
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum State<T, E> {
+pub enum State<T = (), E = ()> {
   Pending,
   Resolve(T),
   Resolved,
