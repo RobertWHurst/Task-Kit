@@ -3,7 +3,7 @@ use super::Executable;
 use super::TaskQueueSet;
 use super::Worker;
 
-#[derive(Debug)]
+
 /// A thread pool for executing tasks.
 ///
 /// Runner contains a pool of workers, each with it's own thread. As tasks are
@@ -12,6 +12,7 @@ use super::Worker;
 /// Runner implement's the work stealling model for parallelism. Idle workers
 /// will steal tasks from their siblings in order keep the load distributed,
 /// and prevent idle cores.
+#[derive(Debug)]
 pub struct Runner {
   task_queue_set: TaskQueueSet,
   workers: Vec<Worker>,
@@ -20,8 +21,12 @@ pub struct Runner {
 impl Runner {
   // Create a new task runner
   pub fn new() -> Self {
+    Self::new_with_worker_count(num_cpus::get() + 1)
+  }
+
+  pub fn new_with_worker_count(n: usize) -> Self {
     let task_queue_set = TaskQueueSet::new();
-    let workers = (0..(num_cpus::get() + 1))
+    let workers = (0..n)
       .map(|_| Worker::new(task_queue_set.clone()))
       .collect();
 
@@ -32,9 +37,9 @@ impl Runner {
   }
 
   // run a task
-  pub fn run<E>(&mut self, task: E)
+  pub fn run<T>(&mut self, task: T)
   where
-    E: Executable + 'static,
+    T: Executable + 'static,
   {
     self.task_queue_set.push_to_rand_queue(Box::new(task));
   }
