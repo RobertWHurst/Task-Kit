@@ -21,10 +21,10 @@ pub struct Runner {
 impl Runner {
   // Create a new task runner
   pub fn new() -> Self {
-    Self::new_with_worker_count(num_cpus::get() + 1)
+    Self::with_worker_count(num_cpus::get() + 1)
   }
 
-  pub fn new_with_worker_count(n: usize) -> Self {
+  pub fn with_worker_count(n: usize) -> Self {
     let task_queue_set = TaskQueueSet::new();
     let workers = (0..n)
       .map(|_| Worker::new(task_queue_set.clone()))
