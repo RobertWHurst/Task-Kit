@@ -1,7 +1,7 @@
-extern crate task;
+extern crate task_kit;
 
 use std::time::Instant;
-use task::prelude::*;
+use task_kit::prelude::*;
 
 fn main() {
   let tasks: Vec<_> = (0..2000000)

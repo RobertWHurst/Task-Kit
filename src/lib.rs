@@ -1,4 +1,3 @@
-extern crate crossbeam;
 extern crate num_cpus;
 extern crate rand;
 

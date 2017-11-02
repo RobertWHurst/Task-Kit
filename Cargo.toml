@@ -8,4 +8,3 @@ license = "MIT"
 [dependencies]
 num_cpus = "1.0"
 rand = "0.3"
-crossbeam = "0.3"
