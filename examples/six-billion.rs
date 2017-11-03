@@ -5,9 +5,8 @@ use task_kit::prelude::*;
 
 fn main() {
   let tasks: Vec<_> = (0..20000)
-    .map(|i| {
+    .map(|_| {
       count_to_1000().join(count_to_2000()).map(|(a, b)| a * b)
-      // .finally(move |_| println!("{}", i))
     })
     .collect();
 

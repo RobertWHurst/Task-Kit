@@ -1,6 +1,9 @@
 extern crate num_cpus;
 extern crate rand;
 
+#[cfg(feature = "futures_support")]
+extern crate futures;
+
 pub mod runner;
 pub mod task;
 

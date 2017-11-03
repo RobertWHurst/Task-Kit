@@ -1,8 +1,10 @@
 use std::fmt::{self, Debug};
 use std::ops::FnMut;
-use std::thread;
 use super::State;
 use super::super::runner::Executable;
+
+#[cfg(feature = "futures_support")]
+use futures::{Async, Future};
 
 /// Tasks can be used to execute code in Task Kit's runner thread pool.
 /// This is the key primive of this crate. It can be used to build and
@@ -113,15 +115,26 @@ where
   /// ```
   pub fn from(val: T) -> Self {
     let mut val = Some(val);
-    Self {
-      task: Box::new(move || match val.take() {
-        Some(v) => State::Resolve(v),
-        None => State::Resolved,
-      }),
-      state: State::Pending,
-      finally: None,
-      catch: None,
-    }
+    Self::new(move || match val.take() {
+      Some(v) => State::Resolve(v),
+      None => State::Resolved,
+    })
+  }
+
+  #[cfg(feature = "futures_support")]
+  pub fn from_future<F>(mut future: F) -> Self
+  where
+    F: Future<Item = T, Error = E> + 'a,
+  {
+    Self::new(move || loop {
+      match future.poll() {
+        Ok(v) => match v {
+          Async::Ready(v) => break State::Resolve(v),
+          Async::NotReady => (),
+        },
+        Err(e) => break State::Reject(e),
+      }
+    })
   }
 
   /// Create a new task from a closure returning a value.
@@ -351,11 +364,24 @@ unsafe impl<'a, T, E> Sync for Task<'a, T, E> {}
 
 #[cfg(test)]
 mod tests {
+  #[cfg(feature = "futures_support")]
+  extern crate tokio_timer;
+
   use super::*;
 
   #[test]
   fn can_create_task() {
     let _: Task<(), ()> = Task::new(|| State::Pending);
+  }
+
+  #[cfg(feature = "futures_support")]
+  #[test]
+  fn can_create_task_from_future() {
+    use self::tokio_timer::{Timer, TimerError};
+    use std::time::Duration;
+
+    let sleep_future = Timer::default().sleep(Duration::new(1, 0));
+    let _: Task<(), TimerError> = Task::from_future(sleep_future);
   }
 
   #[test]
