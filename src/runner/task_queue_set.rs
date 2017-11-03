@@ -3,6 +3,7 @@ use rand::{thread_rng, Rng};
 use super::Executable;
 use super::TaskQueue;
 
+#[doc(hidden)]
 #[derive(Debug, Default, Clone)]
 pub struct TaskQueueSet(Arc<RwLock<Vec<TaskQueue>>>);
 

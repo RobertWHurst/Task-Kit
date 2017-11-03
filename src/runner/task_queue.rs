@@ -1,6 +1,7 @@
 use std::sync::{Arc, RwLock};
 use super::Executable;
 
+#[doc(hidden)]
 #[derive(Debug, Default, Clone)]
 pub struct TaskQueue(Arc<RwLock<Vec<Box<Executable>>>>);
 

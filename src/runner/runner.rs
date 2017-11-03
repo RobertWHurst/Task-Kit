@@ -44,6 +44,16 @@ impl Runner {
     self.task_queue_set.push_to_rand_queue(Box::new(task));
   }
 
+  // run a task
+  pub fn run_all<T>(&mut self, tasks: Vec<T>)
+  where
+    T: Executable + 'static,
+  {
+    for task in tasks {
+      self.run(task);
+    }
+  }
+
   pub fn finish(self) {
     for worker in self.workers {
       worker.finish();

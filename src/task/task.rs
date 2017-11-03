@@ -4,6 +4,47 @@ use std::thread;
 use super::State;
 use super::super::runner::Executable;
 
+/// Tasks can be used to execute code in Task Kit's runner thread pool.
+/// This is the key primive of this crate. It can be used to build and
+/// organize asyncronous code paths.
+///
+/// For more on how to use tasks see the [crate documentation](../index.html).
+///
+/// #Examples
+///
+/// Polling example:
+///
+/// ```
+/// # use task_kit::prelude::*;
+/// # let mut runner = Runner::new();
+/// let mut i = 0;
+/// let task: Task<u32, ()> = Task::new(move || {
+///   if i < 100 {
+///     i += 1;
+///     Pending
+///   } else {
+///     Resolve(i)
+///   }
+/// });
+/// # runner.run(task);
+/// # runner.finish();
+/// ```
+///
+/// Long running example:
+///
+/// ```
+/// # use task_kit::prelude::*;
+/// # let mut runner = Runner::new();
+/// let task: Task<u32, ()> = Task::with(move || {
+///   let mut i = 0;
+///   while i < 100 {
+///     i += 1;
+///   }
+///   i
+/// });
+/// # runner.run(task);
+/// # runner.finish();
+/// ```
 pub struct Task<'a, T = (), E = ()> {
   task: Box<FnMut() -> State<T, E> + 'a>,
   state: State<T, E>,
@@ -16,6 +57,29 @@ where
   T: 'a,
   E: 'a,
 {
+  /// Create a new task from a closure returning a `State`
+  ///
+  /// Provide the new function a closure that contains the logic you wish
+  /// to execute asyncronously. This closure will be executed upon the thread
+  /// pool within the runner until your closure returns an instance of
+  /// `State::Resolve` containing a value or an instance of `State::Reject`
+  /// containing an error value.
+  ///
+  /// # Arguments
+  ///
+  /// * `task` - A closure containing code to be executed asyncronously by the
+  ///            runner.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// # use task_kit::prelude::*;
+  /// # fn do_something_blocking() -> String { String::new() }
+  /// # let mut runner = Runner::new();
+  /// let task: Task<String, ()> = Task::new(|| Resolve(do_something_blocking()));
+  /// # runner.run(task);
+  /// # runner.finish();
+  /// ```
   pub fn new<F>(task: F) -> Self
   where
     F: FnMut() -> State<T, E> + 'a,
@@ -28,6 +92,93 @@ where
     }
   }
 
+  /// Create a new task from a value.
+  ///
+  /// Useful only in cases where you need to pass a task to something, but
+  /// already have the value you wish to resolve.
+  ///
+  /// # Arguments
+  ///
+  /// * `val` - The value you'd like the task to resolve
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// # use task_kit::prelude::*;
+  /// # let my_string = String::new();
+  /// # let mut runner = Runner::new();
+  /// let task: Task<String, ()> = Task::from(my_string);
+  /// # runner.run(task);
+  /// # runner.finish();
+  /// ```
+  pub fn from(val: T) -> Self {
+    let mut val = Some(val);
+    Self {
+      task: Box::new(move || match val.take() {
+        Some(v) => State::Resolve(v),
+        None => State::Resolved,
+      }),
+      state: State::Pending,
+      finally: None,
+      catch: None,
+    }
+  }
+
+  /// Create a new task from a closure returning a value.
+  ///
+  /// The closure will only be executed once by the runner, and is expected to
+  /// return the value you wish to resolve.
+  ///
+  /// # Arguments
+  ///
+  /// * `with` - A closure that will return the value you'd like the task to
+  ///            resolve.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// # use task_kit::prelude::*;
+  /// # fn do_something_blocking() -> String { String::new() }
+  /// # let mut runner = Runner::new();
+  /// let task: Task<String, ()> = Task::with(|| do_something_blocking());
+  /// # runner.run(task);
+  /// # runner.finish();
+  /// ```
+  pub fn with<F>(mut with: F) -> Self
+  where
+    F: FnMut() -> T + 'a,
+  {
+    Self {
+      task: Box::new(move || State::Resolve(with())),
+      state: State::Pending,
+      finally: None,
+      catch: None,
+    }
+  }
+
+  /// Create a new merged task from the current task instance and a second task
+  ///
+  /// Join will return a new task that will resolve a tuple containing the
+  /// results from both the task `join` is called upon, and the task passed in.
+  ///
+  /// Both the current task and the second task passed in will still execute in
+  /// parallel.
+  ///
+  /// # Arguments
+  ///
+  /// * `task` - A second task to join with the current task
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// # use task_kit::prelude::*;
+  /// # let mut runner = Runner::new();
+  /// # let my_task: Task<String, ()> = Task::from(String::new());
+  /// # let my_other_task: Task<String, ()> = Task::from(String::new());
+  /// let merged_task = my_task.join(my_other_task);
+  /// # runner.run(merged_task);
+  /// # runner.finish();
+  /// ```
   pub fn join<U>(mut self, mut task: Task<'a, U, E>) -> Task<'a, (T, U), E>
   where
     U: 'a,
@@ -61,18 +212,33 @@ where
     })
   }
 
-  pub fn poll(&mut self) -> &mut State<T, E> {
-    self.exec();
-    &mut self.state
+  /// Get the task state
+  ///
+  /// Returns a reference to the internal state of the task
+  pub fn state(&self) -> &State<T, E> {
+    &self.state
   }
 
+  /// Executes the closure within the task once
+  ///
+  /// If the task resolves or rejects then the returned option will contain
+  /// a result object.
+  pub fn poll(&mut self) -> Option<Result<T, E>> {
+    self.exec();
+    if self.state.is_pending() {
+      None
+    } else {
+      self.state.take().into_result()
+    }
+  }
+
+  /// Executes the closure within the task blocking until the task completes
   pub fn wait(mut self) -> Option<Result<T, E>> {
     loop {
-      let state = self.poll();
-      if !state.is_pending() {
-        break state.take().into_result();
+      self.exec();
+      if !self.state.is_pending() {
+        break self.state.take().into_result();
       }
-      thread::yield_now();
     }
   }
 
@@ -90,10 +256,10 @@ where
     U: 'a,
   {
     Task::new(move || {
-      let state = self.poll();
+      self.exec();
 
-      if state.is_resolve() || state.is_reject() {
-        match state.take().into_result().unwrap() {
+      if self.state.is_resolve() || self.state.is_reject() {
+        match self.state.take().into_result().unwrap() {
           Ok(r) => task(r),
           Err(e) => State::Reject(e),
         }
@@ -204,7 +370,7 @@ mod tests {
     });
 
     let result = loop {
-      if let &mut State::Resolve(r) = task.poll() {
+      if let Some(Ok(r)) = task.poll() {
         break r;
       }
     };
