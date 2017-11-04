@@ -4,7 +4,7 @@ use super::State;
 use super::super::runner::Executable;
 
 #[cfg(feature = "futures_support")]
-use futures::{Async, Future};
+use futures::{Async, Future, Poll};
 
 /// Tasks can be used to execute code in Task Kit's runner thread pool.
 /// This is the key primive of this crate. It can be used to build and
@@ -50,8 +50,6 @@ use futures::{Async, Future};
 pub struct Task<'a, T = (), E = ()> {
   task: Box<FnMut() -> State<T, E> + 'a>,
   state: State<T, E>,
-  finally: Option<Box<FnMut(T) + 'a>>,
-  catch: Option<Box<FnMut(E) + 'a>>,
 }
 
 impl<'a, T, E> Task<'a, T, E>
@@ -89,8 +87,6 @@ where
     Self {
       task: Box::new(task),
       state: State::Pending,
-      finally: None,
-      catch: None,
     }
   }
 
@@ -117,7 +113,7 @@ where
     let mut val = Some(val);
     Self::new(move || match val.take() {
       Some(v) => State::Resolve(v),
-      None => State::Resolved,
+      None => unreachable!(),
     })
   }
 
@@ -164,8 +160,6 @@ where
     Self {
       task: Box::new(move || State::Resolve(with())),
       state: State::Pending,
-      finally: None,
-      catch: None,
     }
   }
 
@@ -196,11 +190,6 @@ where
   where
     U: 'a,
   {
-    self.finally = None;
-    self.catch = None;
-    task.finally = None;
-    task.catch = None;
-
     Task::new(move || {
       if self.state.is_pending() {
         self.exec();
@@ -250,7 +239,7 @@ where
     loop {
       self.exec();
       if !self.state.is_pending() {
-        break self.state.take().into_result();
+        break self.state.into_result();
       }
     }
   }
@@ -271,7 +260,7 @@ where
     Task::new(move || {
       self.exec();
 
-      if self.state.is_resolve() || self.state.is_reject() {
+      if !self.state.is_pending() {
         match self.state.take().into_result().unwrap() {
           Ok(r) => task(r),
           Err(e) => State::Reject(e),
@@ -282,20 +271,37 @@ where
     })
   }
 
-  pub fn finally<F>(mut self, finally: F) -> Self
+  pub fn done<F>(self, mut done: F) -> Task<'a, (), E>
   where
     F: FnMut(T) + 'a,
   {
-    self.finally = Some(Box::new(finally));
-    self
+    self.then(move |r| State::Resolve(done(r)))
   }
 
-  pub fn catch<F>(mut self, catch: F) -> Self
+  pub fn recover<F, O>(mut self, mut recover: F) -> Task<'a, T, O>
+  where
+    F: FnMut(E) -> State<T, O> + 'a,
+    O: 'a,
+  {
+    Task::new(move || {
+      self.exec();
+
+      if !self.state.is_pending() {
+        match self.state.take().into_result().unwrap() {
+          Ok(r) => State::Resolve(r),
+          Err(e) => recover(e),
+        }
+      } else {
+        State::Pending
+      }
+    })
+  }
+
+  pub fn catch<F>(self, mut catch: F) -> Task<'a, T, ()>
   where
     F: FnMut(E) + 'a,
   {
-    self.catch = Some(Box::new(catch));
-    self
+    self.recover(move |e| State::Reject(catch(e)))
   }
 }
 
@@ -312,17 +318,6 @@ impl<'a, T, E> Executable for Task<'a, T, E> {
     }
 
     self.state = (self.task)();
-
-    if let Some(ref mut finally) = self.finally {
-      if self.state.is_resolve() {
-        finally(self.state.take().resolve().unwrap());
-      }
-    } else if let Some(ref mut catch) = self.catch {
-      if self.state.is_reject() {
-        catch(self.state.take().reject().unwrap());
-      }
-    }
-
     !self.state.is_pending()
   }
 }
@@ -356,6 +351,43 @@ where
   }
   pub fn ge(self, task: Task<'a, T, E>) -> Task<'a, bool, E> {
     self.join(task).map(|(a, b)| a >= b)
+  }
+}
+
+#[cfg(feature = "futures_support")]
+impl<'a, T, E, F> From<F> for Task<'a, T, E>
+where
+  T: 'a,
+  E: 'a,
+  F: Future<Item = T, Error = E> + 'a,
+{
+  fn from(future: F) -> Self {
+    Self::from_future(future)
+  }
+}
+
+#[cfg(feature = "futures_support")]
+impl<'a, T, E> Future for Task<'a, T, E>
+where
+  T: 'a,
+  E: 'a,
+{
+  type Item = T;
+  type Error = E;
+
+  fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    self.exec();
+
+    if let State::Pending = self.state {
+      return Ok(Async::NotReady);
+    }
+
+    match self.state.take() {
+      State::Resolve(v) => Ok(Async::Ready(v)),
+      State::Reject(e) => Err(e),
+      State::Resolved => panic!("Task already resolved"),
+      State::Rejected => panic!("Task already rejected"),
+    }
   }
 }
 
@@ -427,8 +459,8 @@ mod tests {
   }
 
   #[test]
-  fn can_use_finally() {
-    let task: Task<_, ()> = Task::new(|| State::Resolve(1)).finally(|val| assert_eq!(val, 1));
+  fn can_use_done() {
+    let task: Task<_, ()> = Task::new(|| State::Resolve(1)).done(|val| assert_eq!(val, 1));
     task.wait();
   }
 }
