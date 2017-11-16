@@ -1,3 +1,4 @@
+__Do not use Task Kit__: This was a personal toy project. Use futures instead => https://github.com/alexcrichton/futures-rs
 
 # Task Kit
 
